@@ -48,6 +48,7 @@ library(kableExtra)
 
 ```{r, include=FALSE}
 
+# This file is not in the commit as it is large >300mb
 data_dir <- paste(getwd(), 'FinalData.RData', sep = '/')
 load(data_dir)
 
