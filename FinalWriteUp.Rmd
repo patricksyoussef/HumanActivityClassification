@@ -1,0 +1,241 @@
+---
+title: "Human Activity Classification"
+knit: (function(input_file, encoding) {
+  out_dir <- 'docs';
+  rmarkdown::render(input_file,
+ encoding=encoding,
+ output_file=file.path(dirname(input_file), out_dir, 'index.html'))})
+author: "Patrick Youssef"
+link-citations: yes
+bibliography: bibliography.bib
+csl: IEEE.csl
+output:
+  html_document:
+    css: styles.css
+    fig_caption: yes
+    hightlight: tango
+    includes:
+      after_body: footer.html
+      in_header: navbar.html
+    number_sections: yes
+    theme: cosmo
+    toc: yes
+    toc_depth: 2
+    toc_float: yes
+---
+
+```{r include=FALSE}
+
+library(dplyr)
+library(plyr)
+library(tidyr)
+library(tictoc)
+library(tidyverse)
+library(e1071)
+library(pracma)
+library(caTools)
+library(ggplot2)
+library(caret)
+library(randomForest)
+library(Amelia)
+library(RWeka)
+library(parallel)
+library(doParallel)
+library(knitr)
+library(kableExtra)
+
+```
+
+```{r, include=FALSE}
+
+data_dir <- paste(getwd(), 'FinalData.RData', sep = '/')
+load(data_dir)
+
+```
+
+# Abstract
+___
+> Classification of typical daily human activity many applicable uses, especially when the hardware reliance is a mobile phone and associated smart watch. Within the machine learning field this type of problem is known as human activity recognition (HAR). Within this project, we are interesting in seeing to the accuracy that we can attain using different machine learning methods for classes of actions. The data set of interest is the WISDM Smartphone and Smart watch Activity and Bio metrics Data set from the UCI machine learning repository. Some of the actions in the data set are more distinct and so classification from one another will be simpler than one with mere nuances separating them (different eating action vs running). From literature recommendations, three machine learning models will were used and compared along with a novel binning method for increasing accuracy. Of the three models it was evident that random forest gave the best results, but there is a discrepancy between cross validation and testing accuracies. Most actions were able to be able to be classified, peak accuracy of 69.3%, but the eating activities proved to be a challenge.
+
+# Intro
+___
+As part of the MAE 195 Intro to Machine Learning course at UCI, we were tasked with creating a classifier for a common HAR data set. The task was not just to create the classifier, but attempt to understand the shortcomings of the data set and models in getting to perfect classification. This page will cover how the problem was attacked and what results were found. Alongside the primary discussion we will converse about what the next steps would be and implications to real world problems.
+
+# Methods
+___
+Highlighted here is the approach and rational for the problem solution. To establish credibility in my claims, I will continuously be citing well-respected journals and work within the field. When possible, I will use quantitative data or more discrete representations of data or ideas to limit the possibility of grey areas. The goal is to aggregate and more importantly *validate* the train of thought proceeding through the work.
+
+## Code Sections
+Here I will highlight the primary groups that make up the code and give a brief overview of what operations occur within each group. For the sake of brevity, most sections detailed here do not encompass the entire code. For the raw code, please see the appendices.
+
+### Packages Used
+
+I will not highlight my uses for all of the packages, but I will mention some noteworthy ones as they could be useful for someone else with similar problems.
+
+- **[tictoc:](https://cran.r-project.org/web/packages/tictoc/index.html)** Used for timing of function calls and time optimization
+- **[caTools:](https://cran.r-project.org/web/packages/caTools/index.html)** Used for train and test splitting of data
+- **[caret:](http://topepo.github.io/caret/index.html)** Training harness backbone for determining the best model
+- **[Amelia:](https://cran.r-project.org/web/packages/Amelia/index.html)** Helpful for finding NA's in data
+- **[RWeka:](https://cran.r-project.org/web/packages/RWeka/index.html)** Used for reading in ARFF files
+- **[parallel/doParallel:](https://dept.stat.lsa.umich.edu/~jerrick/courses/stat701/notes/parallel.html)** Multi-threading training operations for caret
+
+### Data Import
+
+Originally I was importing the raw data and doing a fresh set of feature engineering, but due to the computation time and the inclusion of a precomputed feature set with the data set I opted to import that instead and move to modeling. Attempts at feature engineering are in the GitHub linked in the appendix. The data set very nicely includes ARFF files for each user broken out on the basis of phone accelerometer, phone gyroscope, watch accelerometer, and watch gyroscope [@weiss]. This section imports each of these files and create a row that represents the features for a selection in the combination set of user, action, and sensor. The data is constructed in 10-second windows such that each of the combinations mentioned prior have 17 windows of features.
+
+```{r results='asis', echo=FALSE, eval=FALSE}
+
+df_all_rep <- df_all[order(df_all$User, df_all$ACTIVITY),]
+kable(df_all_rep[c(1,18,35,52), 1:10], caption = 'Example of the representation a window of one user\'s action in the imported data set.') %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+
+```
+
+### Feature Engineering
+When considering the time series data, it is crucial that we are able to retrieve attributes of the time series to be able to characterize it. The process of generating or extracting these attributes is called feature engineering [@emile]. In my experience with this project, this is not trivial as the choice and fidelity of attributes can make a meaningful impact on your results. Take figure 1 where all the images have the same XY mean and standard deviation. If those were the only parameters from our feature engineering, we would not be able to classify the very distinctly different images correctly [@matejka]. For the given data set there was an included feature set that I will be using, but this was only after attempting my own feature engineering and seeing that the features supplied could be corroborated with literature I had read [@ataspinar_2018]. Some common features that are used are spectral peaks using FFTs and autocorrelation [@rosati_balestra_knaflitz_2018]. Neither of these were used here, but they seem promising.
+
+```{r DataDino, echo=FALSE, fig.cap='Representation of figures with identical basic statistics.', out.height="50%", fig.align='center'}
+
+include_graphics('https://d2f99xq7vri1nk.cloudfront.net/DinoSequentialSmaller.gif')
+
+```
+
+### Feature Reorganization
+
+The features imported from the ARFF files are not in a form that can be immediately sent to our models. We need to row bind pairs of 4 rows that are from the 4 sensor suites. This way we can get each row to represent all features for that window of time for a given user's action. This is also where highly-correlated predictors are removed to reduce the computational load and reduce bias [@brownlee_2019_features].
+
+```{r results='asis', echo=FALSE}
+
+kable(df_features_clean[1:10, 1:10], caption = 'First 10 rows and features of the features dataframe.') %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+
+```
+
+
+### Train/Test Split
+The purpose of this section is to take the dataframe of features and split them into a test and train set. It helps to do this post feature generation as it's very easy to implement k-fold cross-validation. If the data were to be split before feature generation, repeat operations would bog down the code execution. Given the premise of the problem, where a user would have actions that need to be characterized, it was determined that the splits would be on the basis of the dataframe users.
+
+```{r eval=FALSE}
+
+users <- unique(df1$User)
+n_user = length(users)
+inds <- sample.split(1:n_user, SplitRatio = split_ratio)
+users_train <- users[inds]
+users_test <- users[!inds]
+df_train <- bind_rows(df_train, df[df$User %in% users_train,])
+df_test <- bind_rows(df_test, df[df$User %in% users_test,])
+
+```
+
+### Model Testing
+
+For the data set we will evaluate 3 models: K Nearest Neighbors, Support Vector Machines, and Random Forest. These models have shown viability in literature [@banos_damas_pomares_rojas_2012]. The caret package was very helpful in developing a testing harness for these models [@brownlee_2019_first]. With a control variable, we can command different models to all follow the same cross-validation and enable parallel processing of training tasks [@rpubs]. The train function call also will vary important inputs for each model and report back on what parameters are optimal. The data used for training is the train subset from before as the validation predict must be done with unseen data. Unlike a traditional train/test split, the training data here is not just used for model training but is instead used to develop an understanding of model accuracy while also training. The test data set acts as a validation set to ensure that we are getting performance similar to that specified from our cross validation.
+
+```{r, eval=FALSE}
+
+# Run algorithms using 5-fold cross validation
+control <- trainControl(method="cv", number=5, allowParallel=T)
+metric <- "Accuracy"
+
+# kNN
+set.seed(100)
+print('KNN Fit Start')
+fit.knn <- train(Action ~ ., data=data_train, method="knn",
+                 metric=metric, trControl=control)
+pred.knn <- predict(fit.knn, data_test)
+confusionMatrix(pred.knn, data_test$Action)
+
+```
+
+### Binned Accuracy
+
+As mentioned prior, one of the additions that supplements the model is binning the predictions from the classifier by action. As a reminder, the individual predictions are ~10s windows that have been feature-reduced. This means that for a given action, the 3 minute time series, we have 17 predictions for that action observation. To get a more accurate estimation, we will use the max of the binned predictions to determine the best estimate of what the action for the entire time series was. Below is an example of what the binning might look like and what final predictions were made.
+
+# Results
+___
+
+The results were very interesting as the test validation and cross validation ac curacies were very different.
+
+## Results Table
+
+```{r results='asis', echo=FALSE}
+
+kable(df_results, caption = 'Results for the 3 models with all ac curacies.') %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+
+```
+
+## Confusion Matrices
+
+Refer to the below for action decoding.
+
+```{r results='asis', echo=FALSE}
+
+kable(df_action, caption = 'Action codes and their relevant actions') %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+
+```
+
+### Test Confusion Matrices
+
+```{r results='asis', echo=FALSE}
+
+kable(conf.knn$table, caption = 'KNN Test Confusion') %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+kable(conf.svm$table, caption = 'SVM Test Confusion') %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+kable(conf.rf$table, caption = 'RF Test Confusion') %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+
+```
+
+### Binning Vote Matrices (First 10)
+
+```{r results='asis', echo=FALSE}
+
+kable(acc.knn$VoteTable[1:10,], caption = 'KNN Binned Predictions') %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+kable(acc.svm$VoteTable[1:10,], caption = 'SVM Binned Predictions') %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+kable(acc.rf$VoteTable[1:10,], caption = 'RF Binned Predictions') %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+
+```
+
+### Binning Confusion Matrices
+
+```{r results='asis', echo=FALSE}
+
+kable(acc.knn$Confusion$positive, caption = 'KNN Binned Confusion') %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+kable(acc.svm$Confusion$table, caption = 'SVM Binned Confusion') %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+kable(acc.rf$Confusion$table, caption = 'RF Binned Confusion') %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+
+```
+
+# Discussion
+
+Within the discussion section we will converse about what steps could be done moving forward, issues met, and other auxiliary conversations that didn't merit a place in the rest of the text.
+
+## Possibilities of Induced Error
+
+What I observed to be one of the primary sources of error in the model was the lack of consistency in testing procedure that made it difficult to look at data across similar orientations. As an example, consider the plot below for action INSERT ACTION HERE and see how the mean of the acceleration varies from user to user. 
+
+## Next Steps
+
+If I had more time to work on this, here is what I have in mind to push this forward.
+
+- Revisit feature generation, especially in developing orientation agnostic features to mitigate the orientation inconsistency issue.
+- Open the model space up to neural networks, especially CNN with LSTM.
+
+## Open Issues
+
+The primary open issue is in regard to the cross-validation results when compared to unseen data predictions. The cross validation should give us a good idea of the model accuracy and for all models the reported cross-validation accuracy is >90% across all folds whereas the predictions percentages are significantly lower. Out of curiosity, I ran k-folds for the entire data set, as opposed to just the training data, and the accuracy was very similar. This indicated to me that there may be something wrong with the predict method usage as a k-fold across the entire data set emulates 5 different test train splits. They should be similar but they are not. 
+
+# Conclusion
+___
+
+Human activity recognition is an interesting and fruitful problem in the machine learning field. That being said, some limitations in the data and in open questions regarding the modeling have left us with a less than ideal prediction accuracy. Even so, the accuracy is nothing to be dissapointed with as we're beating random selection classification by more than an order of magnitude. Of particular challenge was classifying the different eating activities as the nuances of the actions made it so macroscopic features could not consistently classify them.
+
+# Acknowledgements
+___
+I want to thank Dr. Donald Dabdub for creating this incredible course and opening up our eyes to the world of machine learning. Your course demystified the study and now I feel as though I have a grasp. This is now a field I am deeply considering pursuing further.
+
+# Appendix
+___
+Additional information that was excluded for the sake of brevity or lack of importance is here.
+
+1. [Link to GitHub page for project (including prior revisions)](https://github.com/patricksyoussef/Human-Activity-Recognition)
+2. [Great page for starting with machine learning in R and Python](https://machinelearningmastery.com/)
+
+# References
+___
