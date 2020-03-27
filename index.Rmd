@@ -1,24 +1,12 @@
 ---
 title: "Human Activity Classification"
-knit: (function(input_file, encoding) {
-  out_dir <- 'docs';
-  rmarkdown::render(input_file,
- encoding=encoding,
- output_file=file.path(dirname(input_file), out_dir, 'index.html'))})
 author: "Patrick Youssef"
 link-citations: yes
 bibliography: bibliography.bib
 csl: IEEE.csl
 output:
   html_document:
-    css: styles.css
     fig_caption: yes
-    hightlight: tango
-    includes:
-      after_body: footer.html
-      in_header: navbar.html
-    number_sections: yes
-    theme: cosmo
     toc: yes
     toc_depth: 2
     toc_float: yes
