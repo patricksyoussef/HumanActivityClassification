@@ -185,7 +185,7 @@ kable(acc.rf$VoteTable[1:10,], caption = 'RF Binned Predictions') %>% kable_styl
 
 ```{r results='asis', echo=FALSE}
 
-kable(acc.knn$Confusion$positive, caption = 'KNN Binned Confusion') %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+kable(acc.knn$Confusion$table, caption = 'KNN Binned Confusion') %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
 kable(acc.svm$Confusion$table, caption = 'SVM Binned Confusion') %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
 kable(acc.rf$Confusion$table, caption = 'RF Binned Confusion') %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
 
